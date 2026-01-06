@@ -3366,13 +3366,10 @@ impl<'db> ClassLiteral<'db> {
         specialization: Option<Specialization<'db>>,
         name: &str,
     ) -> PlaceAndQualifiers<'db> {
-        if self.is_typed_dict(db) {
-            return Place::Undefined.into();
-        }
-
         let mut union = UnionBuilder::new(db);
         let mut union_qualifiers = TypeQualifiers::empty();
         let mut is_definitely_bound = false;
+        let mut found_declared = false;
 
         for superclass in self.iter_mro(db, specialization) {
             match superclass {
@@ -3394,12 +3391,18 @@ impl<'db> ClassLiteral<'db> {
                             if origin.is_declared() {
                                 // We found a definitely-declared attribute. Discard possibly collected
                                 // inferred types from subclasses and return the declared type.
+                                // But first check if this is a TypedDict; its fields are accessed
+                                // through the TypedDict type machinery, not instance_member.
+                                if self.is_typed_dict(db) {
+                                    return Place::Undefined.into();
+                                }
                                 return member;
                             }
 
                             is_definitely_bound = true;
                         }
 
+                        found_declared = true;
                         // If the attribute is not definitely declared on this class, keep looking higher
                         // up in the MRO, and build a union of all inferred types (and possibly-declared
                         // types):
@@ -3415,6 +3418,12 @@ impl<'db> ClassLiteral<'db> {
         if union.is_empty() {
             Place::Undefined.with_qualifiers(TypeQualifiers::empty())
         } else {
+            // Check if this is a TypedDict; its fields are accessed through the
+            // TypedDict type machinery, not instance_member.
+            if found_declared && self.is_typed_dict(db) {
+                return Place::Undefined.into();
+            }
+
             let boundness = if is_definitely_bound {
                 Definedness::AlwaysDefined
             } else {
